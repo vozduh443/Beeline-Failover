@@ -2,85 +2,41 @@
 
 set -Eeuo pipefail
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Beeline CDN Failover — Installer
-# https://github.com/vozduh443/Beeline-Failover
-# ══════════════════════════════════════════════════════════════════════════════
-
 APP_NAME="Beeline CDN Failover"
 APP_DIR="/opt/cdn_monitor"
 APP_FILE="${APP_DIR}/cdn_monitor.py"
+VENV_DIR="${APP_DIR}/venv"
+
 SERVICE_NAME="beeline-failover"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
-REPO_RAW="https://raw.githubusercontent.com/vozduh443/Beeline-Failover/main"
-PYTHON_URL="${REPO_RAW}/cdn_monitor.py"
+RAW_BASE="https://raw.githubusercontent.com/vozduh443/Beeline-Failover/main"
+PYTHON_URL="${RAW_BASE}/cdn_monitor.py"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Цвета
-# ─────────────────────────────────────────────────────────────────────────────
-
-if [[ -t 1 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    CYAN='\033[0;36m'
-    WHITE='\033[1;37m'
-    GRAY='\033[0;90m'
-    RESET='\033[0m'
-else
-    RED=''
-    GREEN=''
-    YELLOW=''
-    BLUE=''
-    CYAN=''
-    WHITE=''
-    GRAY=''
-    RESET=''
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Служебные функции
-# ─────────────────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+GRAY='\033[0;90m'
+RESET='\033[0m'
 
 info() {
     echo -e "${CYAN}[*]${RESET} $1"
 }
 
-success() {
+ok() {
     echo -e "${GREEN}[✓]${RESET} $1"
 }
 
-warning() {
+warn() {
     echo -e "${YELLOW}[!]${RESET} $1"
 }
 
-error() {
-    echo -e "${RED}[✗]${RESET} $1" >&2
-}
-
-die() {
-    error "$1"
+fail() {
+    echo -e "${RED}[✗]${RESET} $1"
     exit 1
 }
-
-step() {
-    echo
-    echo -e "${WHITE}━━━ $1 ━━━${RESET}"
-}
-
-cleanup() {
-    :
-}
-
-trap cleanup EXIT
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Баннер
-# ─────────────────────────────────────────────────────────────────────────────
-
-clear 2>/dev/null || true
 
 echo
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${RESET}"
@@ -88,64 +44,35 @@ echo -e "${CYAN}║${RESET}                                                     
 echo -e "${CYAN}║${RESET}       ${WHITE}🐝 Beeline CDN Failover Installer${RESET}          ${CYAN}║${RESET}"
 echo -e "${CYAN}║${RESET}                                                        ${CYAN}║${RESET}"
 echo -e "${CYAN}║${RESET}       Automatic CDN failover & Remnawave             ${CYAN}║${RESET}"
-echo -e "${CYAN}║${RESET}       integration                                     ${CYAN}║${RESET}"
 echo -e "${CYAN}║${RESET}                                                        ${CYAN}║${RESET}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${RESET}"
 echo
 echo -e "${GRAY}GitHub: github.com/vozduh443/Beeline-Failover${RESET}"
 echo
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Проверка root
-# ─────────────────────────────────────────────────────────────────────────────
-
-step "Проверка системы"
-
 if [[ "${EUID}" -ne 0 ]]; then
-    die "Запустите установщик от root."
+    fail "Запустите установщик от root."
 fi
 
-success "Права root подтверждены"
+info "Проверяем операционную систему..."
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Определение ОС
-# ─────────────────────────────────────────────────────────────────────────────
-
-if [[ -f /etc/os-release ]]; then
-    source /etc/os-release
-else
-    die "Не удалось определить операционную систему."
+if [[ ! -f /etc/os-release ]]; then
+    fail "Не удалось определить операционную систему."
 fi
 
-OS_ID="${ID:-unknown}"
-OS_NAME="${PRETTY_NAME:-${OS_ID}}"
+source /etc/os-release
 
-info "ОС: ${OS_NAME}"
+ok "ОС: ${PRETTY_NAME:-$ID}"
 
-case "${OS_ID}" in
-    debian|ubuntu)
-        PACKAGE_MANAGER="apt-get"
-        ;;
-    *)
-        warning "ОС не входит в список протестированных: ${OS_ID}"
-        warning "Продолжаем установку, но автоматическая установка пакетов может отличаться."
-        PACKAGE_MANAGER=""
-        ;;
-esac
+if [[ "${ID}" == "debian" || "${ID}" == "ubuntu" ]]; then
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Установка зависимостей
-# ─────────────────────────────────────────────────────────────────────────────
+    info "Обновляем список пакетов..."
 
-step "Проверка зависимостей"
-
-install_debian_packages() {
     export DEBIAN_FRONTEND=noninteractive
 
-    info "Обновление списка пакетов..."
     apt-get update -qq
 
-    info "Установка системных зависимостей..."
+    info "Устанавливаем зависимости..."
 
     apt-get install -y -qq \
         curl \
@@ -155,56 +82,43 @@ install_debian_packages() {
         python3-venv \
         > /dev/null
 
-    success "Системные зависимости установлены"
-}
+    ok "Системные зависимости установлены"
 
-if [[ -n "${PACKAGE_MANAGER}" ]]; then
-    if ! command -v python3 >/dev/null 2>&1 || \
-       ! command -v curl >/dev/null 2>&1; then
-
-        install_debian_packages
-    else
-        success "Python 3 и curl уже установлены"
-    fi
 else
-    command -v python3 >/dev/null 2>&1 || \
-        die "Python 3 не найден. Установите Python 3 вручную."
+
+    warn "Автоматическая установка пакетов поддерживается только для Debian/Ubuntu."
 
     command -v curl >/dev/null 2>&1 || \
-        die "curl не найден. Установите curl вручную."
+        fail "curl не установлен."
 
-    success "Python 3 и curl найдены"
+    command -v python3 >/dev/null 2>&1 || \
+        fail "python3 не установлен."
+
+    command -v python3 -m venv >/dev/null 2>&1 || \
+        true
 fi
 
 PYTHON_BIN="$(command -v python3)"
 
-PYTHON_VERSION="$(
-    "${PYTHON_BIN}" --version 2>&1
-)"
+info "Python: $(${PYTHON_BIN} --version 2>&1)"
 
-info "${PYTHON_VERSION}"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Создание директории
-# ─────────────────────────────────────────────────────────────────────────────
-
-step "Установка приложения"
+echo
+echo -e "${WHITE}━━━ Установка приложения ━━━${RESET}"
+echo
 
 mkdir -p "${APP_DIR}"
 
 chmod 755 "${APP_DIR}"
 
-success "Каталог ${APP_DIR} создан"
+ok "Каталог ${APP_DIR} создан"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Скачивание Python-приложения
-# ─────────────────────────────────────────────────────────────────────────────
-
-info "Скачивание cdn_monitor.py..."
+info "Скачиваем cdn_monitor.py..."
 
 TMP_FILE="$(mktemp)"
 
-if ! curl \
+trap 'rm -f "${TMP_FILE}"' EXIT
+
+curl \
     --fail \
     --silent \
     --show-error \
@@ -212,50 +126,40 @@ if ! curl \
     --connect-timeout 15 \
     --max-time 60 \
     "${PYTHON_URL}" \
-    -o "${TMP_FILE}"; then
-
-    rm -f "${TMP_FILE}"
-    die "Не удалось скачать cdn_monitor.py с GitHub."
-fi
+    -o "${TMP_FILE}" || \
+    fail "Не удалось скачать cdn_monitor.py."
 
 if [[ ! -s "${TMP_FILE}" ]]; then
-    rm -f "${TMP_FILE}"
-    die "Скачанный cdn_monitor.py пустой."
-fi
-
-if ! head -n 1 "${TMP_FILE}" | grep -q "python3"; then
-    rm -f "${TMP_FILE}"
-    die "GitHub вернул файл, который не похож на Python-скрипт."
+    fail "cdn_monitor.py пустой."
 fi
 
 install -m 755 "${TMP_FILE}" "${APP_FILE}"
 
-rm -f "${TMP_FILE}"
+ok "cdn_monitor.py установлен"
 
-success "cdn_monitor.py установлен"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Python virtualenv
-# ─────────────────────────────────────────────────────────────────────────────
-
-info "Создание Python virtualenv..."
-
-VENV_DIR="${APP_DIR}/venv"
+echo
+echo -e "${WHITE}━━━ Python окружение ━━━${RESET}"
+echo
 
 if [[ ! -d "${VENV_DIR}" ]]; then
-    "${PYTHON_BIN}" -m venv "${VENV_DIR}"
+
+    info "Создаём virtualenv..."
+
+    "${PYTHON_BIN}" -m venv "${VENV_DIR}" || \
+        fail "Не удалось создать Python virtualenv."
+
+    ok "Virtualenv создан"
+
+else
+
+    ok "Virtualenv уже существует"
+
 fi
 
 VENV_PYTHON="${VENV_DIR}/bin/python"
 VENV_PIP="${VENV_DIR}/bin/pip"
 
-success "Virtualenv создан"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Python-зависимости
-# ─────────────────────────────────────────────────────────────────────────────
-
-info "Установка Python-зависимостей..."
+info "Устанавливаем Python-зависимости..."
 
 "${VENV_PIP}" install \
     --disable-pip-version-check \
@@ -268,19 +172,20 @@ info "Установка Python-зависимостей..."
     requests \
     urllib3
 
-success "Python-зависимости установлены"
+ok "requests и urllib3 установлены"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Права
-# ─────────────────────────────────────────────────────────────────────────────
+echo
+echo -e "${WHITE}━━━ Проверка Python-кода ━━━${RESET}"
+echo
 
-chmod 755 "${APP_FILE}"
+"${VENV_PYTHON}" -m py_compile "${APP_FILE}" || \
+    fail "Ошибка синтаксиса в cdn_monitor.py."
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Systemd
-# ─────────────────────────────────────────────────────────────────────────────
+ok "Python-код корректен"
 
-step "Настройка автозапуска"
+echo
+echo -e "${WHITE}━━━ Systemd ━━━${RESET}"
+echo
 
 cat > "${SERVICE_FILE}" <<EOF
 [Unit]
@@ -291,7 +196,6 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-
 WorkingDirectory=${APP_DIR}
 
 ExecStart=${VENV_PYTHON} ${APP_FILE} monitor
@@ -304,66 +208,43 @@ Group=root
 
 Environment=PYTHONUNBUFFERED=1
 
-NoNewPrivileges=true
-PrivateTmp=true
-
 [Install]
 WantedBy=multi-user.target
 EOF
 
-success "Systemd service создан"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Активация сервиса
-# ─────────────────────────────────────────────────────────────────────────────
+ok "Systemd service создан"
 
 systemctl daemon-reload
 
 systemctl enable "${SERVICE_NAME}" >/dev/null
 
-success "Автозапуск включён"
+ok "Автозапуск включён"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Проверка Python-файла
-# ─────────────────────────────────────────────────────────────────────────────
-
-step "Проверка приложения"
-
-if ! "${VENV_PYTHON}" -m py_compile "${APP_FILE}"; then
-    systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
-    die "Ошибка синтаксиса в cdn_monitor.py."
-fi
-
-success "Python-код прошёл проверку"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Запуск
-# ─────────────────────────────────────────────────────────────────────────────
-
-step "Запуск сервиса"
+echo
+echo -e "${WHITE}━━━ Запуск ━━━${RESET}"
+echo
 
 systemctl restart "${SERVICE_NAME}"
 
 sleep 2
 
 if systemctl is-active --quiet "${SERVICE_NAME}"; then
-    success "Beeline CDN Failover успешно запущен"
+
+    ok "Beeline CDN Failover запущен"
+
 else
-    error "Сервис не запустился."
 
     echo
-    echo -e "${YELLOW}Последние строки журнала:${RESET}"
+    echo -e "${RED}Последние строки журнала:${RESET}"
+    echo
+
     journalctl \
         -u "${SERVICE_NAME}" \
         --no-pager \
         -n 30 || true
 
-    exit 1
+    fail "Сервис не запустился."
 fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Финальная информация
-# ─────────────────────────────────────────────────────────────────────────────
 
 echo
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${RESET}"
@@ -372,28 +253,32 @@ echo -e "${GREEN}╚════════════════════
 echo
 
 echo -e "${WHITE}Приложение:${RESET} ${APP_DIR}"
-echo -e "${WHITE}Конфиг/БД:${RESET}   ${APP_DIR}/accounts.db"
-echo -e "${WHITE}Лог:${RESET}         ${APP_DIR}/monitor.log"
-echo -e "${WHITE}Сервис:${RESET}      ${SERVICE_NAME}"
+echo -e "${WHITE}Python:${RESET}     ${APP_FILE}"
+echo -e "${WHITE}База:${RESET}       ${APP_DIR}/accounts.db"
+echo -e "${WHITE}Лог:${RESET}        ${APP_DIR}/monitor.log"
+echo -e "${WHITE}Service:${RESET}    ${SERVICE_NAME}"
 echo
 
-echo -e "${CYAN}Следующие команды:${RESET}"
+echo -e "${CYAN}Команды:${RESET}"
 echo
-echo -e "  ${WHITE}Настройка:${RESET}"
+echo "  Настройка:"
 echo "    ${VENV_PYTHON} ${APP_FILE} setup"
 echo
-echo -e "  ${WHITE}Добавить аккаунт:${RESET}"
+echo "  Добавить аккаунт:"
 echo "    ${VENV_PYTHON} ${APP_FILE} add"
 echo
-echo -e "  ${WHITE}Статус:${RESET}"
+echo "  Настроить Remnawave:"
+echo "    ${VENV_PYTHON} ${APP_FILE} remnawave"
+echo
+echo "  Статус:"
 echo "    ${VENV_PYTHON} ${APP_FILE} status"
 echo
-echo -e "  ${WHITE}Статус systemd:${RESET}"
+echo "  Systemd:"
 echo "    systemctl status ${SERVICE_NAME}"
 echo
-echo -e "  ${WHITE}Логи:${RESET}"
+echo "  Логи:"
 echo "    journalctl -u ${SERVICE_NAME} -f"
 echo
 
-echo -e "${GREEN}Мониторинг запущен и будет автоматически стартовать после перезагрузки.${RESET}"
+echo -e "${GREEN}Мониторинг запущен автоматически.${RESET}"
 echo
