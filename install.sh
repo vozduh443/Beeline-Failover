@@ -1,4 +1,3 @@
-```bash
 #!/usr/bin/env bash
 
 set -Eeuo pipefail
@@ -398,4 +397,3 @@ echo
 
 echo -e "${GREEN}Мониторинг запущен и будет автоматически стартовать после перезагрузки.${RESET}"
 echo
-```
