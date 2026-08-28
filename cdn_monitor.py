@@ -1,4 +1,3 @@
-```python
 #!/usr/bin/env python3
 """
 Beeline CDN Monitor & Auto-Failover
@@ -1304,4 +1303,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
