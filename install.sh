@@ -17,6 +17,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+BLUE='\033[0;34m'
 WHITE='\033[1;37m'
 GRAY='\033[0;90m'
 RESET='\033[0m'
@@ -38,6 +39,10 @@ fail() {
     exit 1
 }
 
+trap 'echo -e "\n${RED}[✗] Установка прервана.${RESET}"' INT TERM
+
+clear 2>/dev/null || true
+
 echo
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${RESET}"
 echo -e "${CYAN}║${RESET}                                                        ${CYAN}║${RESET}"
@@ -54,7 +59,8 @@ if [[ "${EUID}" -ne 0 ]]; then
     fail "Запустите установщик от root."
 fi
 
-info "Проверяем операционную систему..."
+echo -e "${WHITE}━━━ Проверка системы ━━━${RESET}"
+echo
 
 if [[ ! -f /etc/os-release ]]; then
     fail "Не удалось определить операционную систему."
@@ -62,41 +68,43 @@ fi
 
 source /etc/os-release
 
-ok "ОС: ${PRETTY_NAME:-$ID}"
+info "ОС: ${PRETTY_NAME:-$ID}"
 
-if [[ "${ID}" == "debian" || "${ID}" == "ubuntu" ]]; then
+case "${ID}" in
+    ubuntu|debian)
+        export DEBIAN_FRONTEND=noninteractive
 
-    info "Обновляем список пакетов..."
+        info "Обновляем список пакетов..."
+        apt-get update -qq
 
-    export DEBIAN_FRONTEND=noninteractive
+        info "Устанавливаем зависимости..."
 
-    apt-get update -qq
+        apt-get install -y -qq \
+            curl \
+            ca-certificates \
+            python3 \
+            python3-pip \
+            python3-venv \
+            > /dev/null
 
-    info "Устанавливаем зависимости..."
+        ok "Системные зависимости установлены"
+        ;;
 
-    apt-get install -y -qq \
-        curl \
-        ca-certificates \
-        python3 \
-        python3-pip \
-        python3-venv \
-        > /dev/null
+    *)
+        warn "ОС ${ID} не входит в список протестированных."
+        warn "Продолжаем установку."
 
-    ok "Системные зависимости установлены"
+        command -v curl >/dev/null 2>&1 || \
+            fail "Не найден curl."
 
-else
+        command -v python3 >/dev/null 2>&1 || \
+            fail "Не найден python3."
 
-    warn "Автоматическая установка пакетов поддерживается только для Debian/Ubuntu."
-
-    command -v curl >/dev/null 2>&1 || \
-        fail "curl не установлен."
-
-    command -v python3 >/dev/null 2>&1 || \
-        fail "python3 не установлен."
-
-    command -v python3 -m venv >/dev/null 2>&1 || \
-        true
-fi
+        if ! python3 -m venv --help >/dev/null 2>&1; then
+            fail "Не найден модуль python3-venv."
+        fi
+        ;;
+esac
 
 PYTHON_BIN="$(command -v python3)"
 
@@ -107,16 +115,13 @@ echo -e "${WHITE}━━━ Установка приложения ━━━${RE
 echo
 
 mkdir -p "${APP_DIR}"
-
 chmod 755 "${APP_DIR}"
 
 ok "Каталог ${APP_DIR} создан"
 
-info "Скачиваем cdn_monitor.py..."
-
 TMP_FILE="$(mktemp)"
 
-trap 'rm -f "${TMP_FILE}"' EXIT
+info "Скачиваем cdn_monitor.py..."
 
 curl \
     --fail \
@@ -125,15 +130,24 @@ curl \
     --location \
     --connect-timeout 15 \
     --max-time 60 \
-    "${PYTHON_URL}" \
-    -o "${TMP_FILE}" || \
-    fail "Не удалось скачать cdn_monitor.py."
+    "${PYTHON_URL}?nocache=$(date +%s)" \
+    -o "${TMP_FILE}" || {
+        rm -f "${TMP_FILE}"
+        fail "Не удалось скачать cdn_monitor.py."
+    }
 
 if [[ ! -s "${TMP_FILE}" ]]; then
+    rm -f "${TMP_FILE}"
     fail "cdn_monitor.py пустой."
 fi
 
+if ! head -n 1 "${TMP_FILE}" | grep -q "python3"; then
+    rm -f "${TMP_FILE}"
+    fail "Скачанный файл не похож на Python-скрипт."
+fi
+
 install -m 755 "${TMP_FILE}" "${APP_FILE}"
+rm -f "${TMP_FILE}"
 
 ok "cdn_monitor.py установлен"
 
@@ -142,18 +156,14 @@ echo -e "${WHITE}━━━ Python окружение ━━━${RESET}"
 echo
 
 if [[ ! -d "${VENV_DIR}" ]]; then
-
     info "Создаём virtualenv..."
 
     "${PYTHON_BIN}" -m venv "${VENV_DIR}" || \
-        fail "Не удалось создать Python virtualenv."
+        fail "Не удалось создать virtualenv."
 
     ok "Virtualenv создан"
-
 else
-
     ok "Virtualenv уже существует"
-
 fi
 
 VENV_PYTHON="${VENV_DIR}/bin/python"
@@ -212,38 +222,48 @@ Environment=PYTHONUNBUFFERED=1
 WantedBy=multi-user.target
 EOF
 
-ok "Systemd service создан"
-
 systemctl daemon-reload
-
 systemctl enable "${SERVICE_NAME}" >/dev/null
 
+ok "Systemd service создан"
 ok "Автозапуск включён"
 
 echo
-echo -e "${WHITE}━━━ Запуск ━━━${RESET}"
+echo -e "${WHITE}━━━ Первичная настройка ━━━${RESET}"
 echo
 
-systemctl restart "${SERVICE_NAME}"
+echo -e "${CYAN}Сейчас будет выполнена первичная настройка.${RESET}"
+echo
 
-sleep 2
+"${VENV_PYTHON}" "${APP_FILE}" setup
 
-if systemctl is-active --quiet "${SERVICE_NAME}"; then
+echo
+echo -e "${WHITE}━━━ Проверка конфигурации ━━━${RESET}"
+echo
 
-    ok "Beeline CDN Failover запущен"
-
+if ! "${VENV_PYTHON}" "${APP_FILE}" check-config; then
+    warn "Конфигурация ещё не полностью заполнена."
+    warn "Сервис установлен, но запуск мониторинга пропущен."
 else
-
     echo
-    echo -e "${RED}Последние строки журнала:${RESET}"
+    echo -e "${WHITE}━━━ Запуск ━━━${RESET}"
     echo
 
-    journalctl \
-        -u "${SERVICE_NAME}" \
-        --no-pager \
-        -n 30 || true
+    systemctl restart "${SERVICE_NAME}"
 
-    fail "Сервис не запустился."
+    sleep 2
+
+    if systemctl is-active --quiet "${SERVICE_NAME}"; then
+        ok "Beeline CDN Failover запущен"
+    else
+        echo
+        journalctl \
+            -u "${SERVICE_NAME}" \
+            --no-pager \
+            -n 30 || true
+
+        fail "Сервис не запустился."
+    fi
 fi
 
 echo
@@ -253,32 +273,16 @@ echo -e "${GREEN}╚════════════════════
 echo
 
 echo -e "${WHITE}Приложение:${RESET} ${APP_DIR}"
-echo -e "${WHITE}Python:${RESET}     ${APP_FILE}"
-echo -e "${WHITE}База:${RESET}       ${APP_DIR}/accounts.db"
-echo -e "${WHITE}Лог:${RESET}        ${APP_DIR}/monitor.log"
-echo -e "${WHITE}Service:${RESET}    ${SERVICE_NAME}"
+echo -e "${WHITE}Сервис:${RESET}     ${SERVICE_NAME}"
+echo -e "${WHITE}База:${RESET}        ${APP_DIR}/accounts.db"
+echo -e "${WHITE}Лог:${RESET}         ${APP_DIR}/monitor.log"
 echo
 
-echo -e "${CYAN}Команды:${RESET}"
+echo -e "${CYAN}Управление:${RESET}"
 echo
-echo "  Настройка:"
-echo "    ${VENV_PYTHON} ${APP_FILE} setup"
+echo "  ${VENV_PYTHON} ${APP_FILE}"
 echo
-echo "  Добавить аккаунт:"
-echo "    ${VENV_PYTHON} ${APP_FILE} add"
+echo "  systemctl status ${SERVICE_NAME}"
 echo
-echo "  Настроить Remnawave:"
-echo "    ${VENV_PYTHON} ${APP_FILE} remnawave"
-echo
-echo "  Статус:"
-echo "    ${VENV_PYTHON} ${APP_FILE} status"
-echo
-echo "  Systemd:"
-echo "    systemctl status ${SERVICE_NAME}"
-echo
-echo "  Логи:"
-echo "    journalctl -u ${SERVICE_NAME} -f"
-echo
-
-echo -e "${GREEN}Мониторинг запущен автоматически.${RESET}"
+echo "  journalctl -u ${SERVICE_NAME} -f"
 echo
